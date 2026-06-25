@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="1.0.0"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PAYLOAD_FILE="$SCRIPT_DIR/rtl-payload.js"

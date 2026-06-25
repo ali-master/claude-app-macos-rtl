@@ -28,6 +28,9 @@
   <rect width="1280" height="640" fill="url(#bg)"/>
   <rect width="1280" height="640" fill="url(#halo)"/>
 
+  <!-- Content block (logo + wordmark) nudged left for right-edge breathing room -->
+  <g transform="translate(-44 0)">
+
   <!-- Logo -->
   <g transform="translate(96 168) scale(0.595)" filter="url(#soft)">
     <path clip-path="url(#sq)" fill="url(#coral)" d="M0 0h512v512H0z"/>
@@ -72,5 +75,7 @@
       <rect x="932" y="446" width="190" height="62" rx="16" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.10"/>
       <text x="1027" y="486" text-anchor="middle" font-size="30" fill="#F6F1E7">سلام دنیا</text>
     </g>
+  </g>
+
   </g>
 </svg>

@@ -18,15 +18,36 @@ Hebrew · Arabic · Persian — in the chat box *and* in Claude's replies. Code 
 
 ## Install in 30 seconds
 
+One command — no `git`, no manual download:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ali-master/claude-app-macos-rtl/master/install.sh | bash
+```
+
+That's it. The script fetches the repo, builds a patched copy at `~/Applications/Claude-RTL.app`, and launches it. **Your original `/Applications/Claude.app` is never modified.**
+
+**Preview first (recommended)** — see exactly what it would do, changing nothing:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ali-master/claude-app-macos-rtl/master/install.sh | bash -s -- --dry-run
+```
+
+Any `patch.sh` flag can be forwarded after `bash -s --` (e.g. `--font Vazirmatn`).
+
+<details>
+<summary><strong>Prefer to clone it yourself?</strong></summary>
+
+<br/>
+
 ```bash
 git clone https://github.com/ali-master/claude-app-macos-rtl.git
 cd claude-app-macos-rtl
 ./patch.sh --install
 ```
 
-That's it. A patched copy is built at `~/Applications/Claude-RTL.app` and launches automatically. **Your original `/Applications/Claude.app` is never modified.**
+Downloaded the ZIP instead of cloning? Run `chmod +x patch.sh` first.
 
-> Downloaded the ZIP instead of cloning? Run `chmod +x patch.sh` first.
+</details>
 
 ## Why
 

@@ -53,6 +53,7 @@ SKIPPED=0           # set by inject_payload
 DRY_RUN=false       # --dry-run / -n : preview only, never mutate anything
 COLOR_MODE=auto     # auto | always | never
 ASSUME_YES=false    # --yes / -y : skip the interactive menu confirmation
+FONT_EXPLICIT=false # true once --font is passed on the CLI (the default font is non-empty, so emptiness can't signal intent)
 DEPS_OK=true        # set by check_dependencies
 
 # Progress / spinner state.
@@ -860,9 +861,9 @@ while [ $# -gt 0 ]; do
             COLOR_MODE=never; shift ;;
         --font)
             [ $# -lt 2 ] && { err "--font requires a font family name (e.g. --font Vazirmatn)"; exit 1; }
-            RTL_FONT_FAMILY="$2"; shift 2 ;;
+            RTL_FONT_FAMILY="$2"; FONT_EXPLICIT=true; shift 2 ;;
         --font=*)
-            RTL_FONT_FAMILY="${1#--font=}"; shift ;;
+            RTL_FONT_FAMILY="${1#--font=}"; FONT_EXPLICIT=true; shift ;;
         -V|--version)
             echo "Claude Desktop RTL Patcher v$VERSION"; exit 0 ;;
         -h|--help)
@@ -888,8 +889,9 @@ case "$ACTION" in
     --status)    show_status ;;
     "")
         # If --font was given without an action, the user clearly wanted a
-        # flag-driven invocation — don't silently drop into the menu.
-        if [ -n "$RTL_FONT_FAMILY" ]; then
+        # flag-driven invocation — don't silently drop into the menu. (The
+        # default font is non-empty, so we key off explicit use, not emptiness.)
+        if $FONT_EXPLICIT; then
             err "--font requires an action flag (e.g. --install --font $RTL_FONT_FAMILY)."
             exit 1
         fi

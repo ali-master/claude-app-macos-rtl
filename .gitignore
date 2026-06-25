@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+
+# Temp files from patcher
+*.tmp
+
+.idea

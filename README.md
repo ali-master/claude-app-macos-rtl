@@ -1,121 +1,147 @@
-# Claude Desktop RTL Patch for macOS
+<div align="center">
 
-Adds automatic right-to-left (RTL) text support to [Claude Desktop](https://claude.ai/download) on macOS. Hebrew and Arabic text is detected in real-time and aligned properly — both in the chat input and in Claude's responses — while code blocks stay left-to-right.
+<img src="assets/logo.svg" width="132" height="132" alt="Claude Desktop RTL logo" />
 
-## What it does
+# Claude Desktop RTL
 
-- **Chat input**: automatically switches to RTL alignment when you type Hebrew/Arabic
-- **Claude's responses**: detects RTL text in real-time as responses stream in
-- **Code blocks**: always stay LTR — code formatting is never affected
-- **Math expressions**: LaTeX/KaTeX, MathJax, and MathML always stay LTR — equations are never mirrored
-- **Mixed content**: smart 3-layer detection handles sentences mixing Hebrew/Arabic and English
-- **Non-destructive**: creates a patched *copy* of Claude.app — the original is never modified
-- **Distinct icon**: the patched app has an "RTL" badge on its icon so you can tell them apart at a glance
+**Real-time right-to-left text support for [Claude Desktop](https://claude.ai/download) on macOS.**
+Hebrew · Arabic · Persian — in the chat box *and* in Claude's replies. Code and math stay LTR. Your original app is never touched.
 
-## Before & After
+[![Platform](https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white)](#requirements)
+[![No sudo](https://img.shields.io/badge/sudo-not%20required-3fb950)](#why-a-copy-instead-of-patching-in-place)
+[![Shell](https://img.shields.io/badge/built%20with-bash-4EAA25?logo=gnubash&logoColor=white)](patch.sh)
+[![License: MIT](https://img.shields.io/badge/license-MIT-D2724F)](LICENSE)
 
-| Without patch | With patch |
-|:---:|:---:|
-| Hebrew/Arabic text left-aligned, hard to read | Hebrew/Arabic text properly right-aligned |
-| `שלום עולם` / `مرحبا بالعالم` stuck to the left | `שלום עולם` / `مرحبا بالعالم` aligned to the right |
+</div>
 
-## Requirements
+---
 
-- **macOS** (tested on macOS 15 Sequoia / macOS 26 Tahoe)
-- **Claude Desktop** installed at `/Applications/Claude.app`
-- **Node.js** (v16+) — needed for `npx` which runs `@electron/asar` and `@electron/fuses`
-  - Install via [nodejs.org](https://nodejs.org/) or `brew install node`
-
-## Quick Start
+## Install in 30 seconds
 
 ```bash
-# Clone the repo
-git clone https://github.com/ali-master/claude-desktop-rtl-mac.git
-cd claude-desktop-rtl-mac
-
-# Install the patch
+git clone https://github.com/ali-master/claude-app-macos-rtl.git
+cd claude-app-macos-rtl
 ./patch.sh --install
 ```
 
-> **Downloaded the ZIP instead of cloning?** You may need to make the script executable first: `chmod +x patch.sh`
+That's it. A patched copy is built at `~/Applications/Claude-RTL.app` and launches automatically. **Your original `/Applications/Claude.app` is never modified.**
 
-That's it. A patched copy is created at `~/Applications/Claude-RTL.app` (your home folder, not `/Applications/`) and launches automatically.
+> Downloaded the ZIP instead of cloning? Run `chmod +x patch.sh` first.
+
+## Why
+
+Claude Desktop left-aligns Hebrew, Arabic, and Persian — making them awkward to read and type. This patch fixes the direction in real time, without forking the app or breaking auto-updates.
+
+| | Without patch | With patch |
+|---|:---|:---|
+| **Alignment** | RTL text jammed to the left | RTL text properly right-aligned |
+| **Example** | `שלום עולם` / `مرحبا بالعالم` / `سلام دنیا` stuck to the left | `שלום עולם` / `مرحبا بالعالم` / `سلام دنیا` aligned to the right |
+
+## Features
+
+- 🔄 **Live detection** — chat input flips to RTL the moment you type Hebrew/Arabic/Persian
+- 💬 **Streaming-aware** — Claude's responses are aligned in real time as they stream in
+- 🧮 **Code & math safe** — `<pre>`, `<code>`, KaTeX, MathJax & MathML always stay LTR
+- 🧠 **Smart mixed content** — 3-layer detection handles sentences that blend RTL and English
+- 🅰️ **Optional RTL fonts** — opt in to bundled Vazirmatn / Estedad, or any installed font
+- 🛡️ **Non-destructive** — patches a *copy*; the original app and its auto-updates are untouched
+- 🏷️ **Distinct icon** — the patched app wears an `RTL` badge so you never mix them up
 
 ## Usage
 
 ```bash
-# Install (or update after Claude updates)
-./patch.sh --install
-
-# Remove the patched copy
-./patch.sh --uninstall
-
-# Check status
-./patch.sh --status
-
-# Interactive menu
-./patch.sh
-
-# Show help
-./patch.sh --help
+./patch.sh --install      # Build the patched copy (re-run to update after Claude updates)
+./patch.sh --uninstall    # Remove the patched copy (original untouched)
+./patch.sh --status       # Show installed versions + ASAR fuse state
+./patch.sh                # Interactive menu
+./patch.sh --help         # Full help
 ```
 
-### Optional: custom font for RTL text
+### Optional: a dedicated RTL font
 
-By default the patch leaves Claude's font alone — only direction is changed. If you want a dedicated font for Hebrew/Arabic/Persian text (and especially if Claude's default font has poor Persian/Arabic glyphs), opt in with `--font NAME`:
+By default the patch only changes **direction**, not the font. To also swap the font for RTL text (handy if the default has weak Persian/Arabic glyphs), opt in with `--font`:
 
 ```bash
-# Use a bundled font (Persian/Arabic, OFL licensed — see fonts/OFL.txt)
-./patch.sh --install --font Vazirmatn
-./patch.sh --install --font Estedad
-
-# Use any font already installed on your system
-./patch.sh --install --font "B Nazanin"
+./patch.sh --install --font Vazirmatn    # bundled, OFL — Persian/Arabic + Latin
+./patch.sh --install --font Estedad       # bundled, OFL — 9 weights, Thin → Black
+./patch.sh --install --font "B Nazanin"   # any font already installed on your system
 ```
 
-Two fonts ship in `fonts/`, both Persian/Arabic with full Latin coverage: **Vazirmatn** and **Estedad** (9 weights, Thin → Black). Bundled fonts get embedded as base64 `data:` URIs (Claude's CSP blocks external font loads), so they work even if not installed on the system. To bundle a different font, drop your own `.woff2/.woff/.ttf/.otf` files into `fonts/` — name them so they start with the family name (e.g. `MyFont-Bold.woff2`) — and pass `--font "<family-name>"`. Code blocks always stay monospace regardless of the chosen font.
+Bundled fonts are embedded as base64 `data:` URIs (Claude's CSP blocks external font loads), so they work even when not installed system-wide. Drop your own `.woff2/.woff/.ttf/.otf` into `fonts/` — named so they start with the family name — to bundle a different one. Code blocks always stay monospace.
 
-> **Hebrew users:** Vazirmatn and Estedad don't ship Hebrew glyphs — Hebrew falls through to the system Hebrew font, so these fonts only affect Latin glyphs in your Hebrew sentences. For Hebrew-first use, leave the default off or bundle a Hebrew-friendly font (e.g. Heebo, Rubik, Assistant) in `fonts/`.
+> **Hebrew users:** Vazirmatn/Estedad ship no Hebrew glyphs — Hebrew falls back to the system font. Bundle a Hebrew-friendly family (Heebo, Rubik, Assistant…) in `fonts/` for full coverage.
 
-## How it works
+## Requirements
 
-The patcher performs these steps:
-
-1. **Copies** `/Applications/Claude.app` → `~/Applications/Claude-RTL.app`
-2. **Extracts** the Electron `app.asar` archive
-3. **Prepends** the RTL detection JavaScript into `.vite/build/*.js` renderer files
-4. **Repacks** the `app.asar` archive
-5. **Disables** the `EnableEmbeddedAsarIntegrityValidation` Electron fuse — this is required because the modified archive has a different hash, and Electron would crash on startup without this step
-6. **Re-signs** the app with an ad-hoc code signature
-
-The original `/Applications/Claude.app` is **never touched**.
-
-### Why a copy instead of patching in-place?
-
-Unlike the [Windows version](https://github.com/shraga100/claude-desktop-rtl-patch) which patches the original installation directly, the macOS version creates a separate copy. This is safer because:
-
-- **No sudo required** — `~/Applications/` is user-writable, so the script never needs elevated privileges
-- **Original stays intact** — `/Applications/Claude.app` is never touched; you can always fall back to it
-- **Auto-updates keep working** — Anthropic's updates go to the original app and won't conflict with the patch
-- **No risk of breaking Claude** — if anything goes wrong, just delete the patched copy and the original is still there
-- **macOS protections respected** — `/Applications/Claude.app` is owned by root and protected by App Management permissions; modifying it would require sudo and bypassing macOS security features
+- **macOS** (tested on Sequoia 15 / Tahoe 26)
+- **Claude Desktop** at `/Applications/Claude.app`
+- **Node.js 16+** — for `npx`, which fetches `@electron/asar` & `@electron/fuses` on demand ([nodejs.org](https://nodejs.org/) or `brew install node`)
 
 ## After Claude updates
 
-When Claude Desktop auto-updates, it updates the original at `/Applications/Claude.app`. Your patched copy at `~/Applications/Claude-RTL.app` is a separate, independent app — it won't receive auto-updates. After Claude updates, re-run the patcher to create a fresh patched copy from the new version:
+Anthropic's auto-updater only touches the **original** app. Your patched copy is independent and won't auto-update — just re-run the patcher to rebuild it from the new version:
 
 ```bash
 ./patch.sh --install
 ```
 
-This creates a fresh patched copy from the updated original.
+Keep the original `Claude.app` for updates; let it update itself, then re-patch.
 
-**Tip:** Keep the original `Claude.app` around for updates. Let it update itself normally, then re-run the patcher. The patched copy may show update prompts, but updates won't apply correctly to it — always update via the original app.
+## How it works
 
-## Uninstalling
+<details>
+<summary><strong>The patching pipeline (click to expand)</strong></summary>
+
+<br/>
+
+1. **Copy** `/Applications/Claude.app` → `~/Applications/Claude-RTL.app`
+2. **Extract** the Electron `app.asar` archive
+3. **Prepend** the RTL detection JS into `.vite/build/*.js` renderer files (the main-process entry is skipped — injecting it black-screens launch)
+4. **Repack** the archive
+5. **Disable** the `EnableEmbeddedAsarIntegrityValidation` fuse — required, since the modified archive has a new hash that Electron would otherwise reject at startup
+6. **Re-sign** ad-hoc (the original signature is invalidated by the changes; ad-hoc signing is what lets macOS launch the modified bundle)
+
+The original `/Applications/Claude.app` is **never touched.**
+
+</details>
+
+### Why a copy instead of patching in place?
+
+Unlike the [Windows version](https://github.com/shraga100/claude-desktop-rtl-patch), the macOS patcher builds a separate copy — which is strictly safer:
+
+- **No `sudo`** — `~/Applications/` is user-writable; the script never needs elevated privileges
+- **Original stays intact** — `/Applications/Claude.app` is root-owned and App-Management-protected; it's left alone
+- **Auto-updates keep working** — Anthropic's updates flow to the original without conflict
+- **Trivial rollback** — if anything breaks, delete the copy; the original is still there
+
+## Uninstall
 
 ```bash
 ./patch.sh --uninstall
 ```
 
-This removes `~/Applications/Claude-RTL.app`. The original Claude.app is unaffected.
+Removes `~/Applications/Claude-RTL.app`. The original is unaffected.
+
+## FAQ
+
+**macOS asks to re-approve "Claude Safe Storage" on first launch.** Expected — a different code signature means macOS re-prompts for Keychain access. A one-time blank window on first launch can also happen. Neither is a bug.
+
+**Does this touch my real Claude app or Claude Code CLI?** No. Every operation is scoped to the `Claude-RTL.app` copy.
+
+## Credits & License
+
+RTL detection logic originates from the upstream Windows project [shraga100/claude-desktop-rtl-patch](https://github.com/shraga100/claude-desktop-rtl-patch); this repo's value-add is the macOS patching pipeline. Bundled fonts (Vazirmatn, Estedad) are OFL-licensed — see [`fonts/OFL.txt`](fonts/OFL.txt).
+
+Licensed under [MIT](LICENSE) · © 2025 Ali Torki
+
+<div align="center"><sub>Not affiliated with Anthropic. "Claude" is a trademark of Anthropic.</sub></div>
+
+---
+
+<div align="center">
+
+**[⬆ Back to Top](#claude-desktop-rtl)**
+
+Built with ❤️ by [Ali Torki](https://github.com/ali-master)
+
+</div>

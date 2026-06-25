@@ -11,9 +11,9 @@
 // (codePointAt), NOT UTF-16 code units, so astral blocks like Adlam work.
 var RTL_RANGES = [
   [0x0590, 0x05FF], // Hebrew
-  [0x0600, 0x06FF], // Arabic
+  [0x0600, 0x06FF], // Arabic (incl. Persian/Farsi letters: پ چ ژ گ ک ی, + Urdu)
   [0x0700, 0x074F], // Syriac
-  [0x0750, 0x077F], // Arabic Supplement
+  [0x0750, 0x077F], // Arabic Supplement (extra Persian/Urdu/African forms)
   [0x0780, 0x07BF], // Thaana
   [0x07C0, 0x07FF], // NKo
   [0x0800, 0x083F], // Samaritan

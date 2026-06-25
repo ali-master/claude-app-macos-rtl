@@ -12,7 +12,9 @@
 #   Adds right-to-left (Hebrew / Arabic / Persian) support to Claude Desktop
 #   by patching a *copy* of the app — the original is never touched.
 #
-#   Run with --help for usage, or --dry-run to preview without changing anything.
+#   Each step runs under a live gradient spinner that tails the job's stdout
+#   inline, then collapses to a ✓ summary. Run --help for usage, --dry-run to
+#   preview (spinner off so every action is printed), --no-color for plain logs.
 # ============================================================================
 
 set -euo pipefail
@@ -43,6 +45,9 @@ PATCHED_APP="$HOME/Applications/Claude-RTL.app"
 PATCHED_ASAR="$PATCHED_APP/Contents/Resources/app.asar"
 
 TMP_DIR=""
+HEADER_FILE=""      # combined RTL+font header; set by job_header, read by job_inject
+INJECTED=0          # set by inject_payload
+SKIPPED=0           # set by inject_payload
 
 # Runtime modes (set by the argument parser, see Main).
 DRY_RUN=false       # --dry-run / -n : preview only, never mutate anything
@@ -50,15 +55,25 @@ COLOR_MODE=auto     # auto | always | never
 ASSUME_YES=false    # --yes / -y : skip the interactive menu confirmation
 DEPS_OK=true        # set by check_dependencies
 
-# Per-action step counter (cosmetic "[n/total]" progress labels).
+# Progress / spinner state.
 STEP=0
 STEP_TOTAL=0
+SPINNER_ENABLED=false
+TRUECOLOR=false
+SPIN_PID=""
+SPIN_LOG=""
+SPIN_TITLE=""
+GRAD_TITLE=""
+JOB_NOTE=""
+# Braille spinner frames kept in an ARRAY: bash 3.2 substring is byte-indexed,
+# so slicing these 3-byte glyphs out of a string would corrupt them.
+SPIN_FRAMES=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 
 # ---------------------------------------------------------------------------
-# Colors & symbols
+# Colors
 # ---------------------------------------------------------------------------
-# Colors are resolved *after* argument parsing so --color/--no-color and the
-# NO_COLOR convention can take effect. Until then they are empty (no-ops).
+# Resolved *after* argument parsing so --color/--no-color and the NO_COLOR
+# convention can take effect. Until then they are empty (no-ops).
 RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' DIM='' BOLD='' NC=''
 
 setup_colors() {
@@ -78,8 +93,36 @@ setup_colors() {
         RED=$'\033[0;31m';   GREEN=$'\033[0;32m'; YELLOW=$'\033[0;33m'
         BLUE=$'\033[0;34m';  CYAN=$'\033[0;36m';  MAGENTA=$'\033[0;35m'
         DIM=$'\033[2m';      BOLD=$'\033[1m';     NC=$'\033[0m'
+        # 24-bit gradients only when the terminal advertises truecolor.
+        case "${COLORTERM:-}" in truecolor|24bit) TRUECOLOR=true ;; esac
     fi
 }
+
+# ---------------------------------------------------------------------------
+# Gradient text (24-bit truecolor, with graceful fallback)
+# ---------------------------------------------------------------------------
+# gradient TEXT R1 G1 B1 R2 G2 B2 — paints TEXT with a per-character color ramp
+# from (R1,G1,B1) to (R2,G2,B2). Falls back to bold-cyan without truecolor, and
+# to plain text when colors are off. Always ends reset so nothing bleeds.
+gradient() {
+    local text="$1" r1=$2 g1=$3 b1=$4 r2=$5 g2=$6 b2=$7
+    if [ -z "$NC" ]; then printf '%s' "$text"; return; fi
+    if ! $TRUECOLOR; then printf '%s%s%s' "$BOLD$CYAN" "$text" "$NC"; return; fi
+    local n=${#text} i ch r g b out=''
+    for ((i = 0; i < n; i++)); do
+        ch=${text:i:1}
+        if [ "$n" -le 1 ]; then r=$r1; g=$g1; b=$b1; else
+            r=$(( r1 + (r2 - r1) * i / (n - 1) ))
+            g=$(( g1 + (g2 - g1) * i / (n - 1) ))
+            b=$(( b1 + (b2 - b1) * i / (n - 1) ))
+        fi
+        out+=$'\033[1;38;2;'"${r};${g};${b}m${ch}"
+    done
+    printf '%s%s' "$out" "$NC"
+}
+
+# Brand ramp: electric cyan → fuchsia.
+grad() { gradient "$1" 34 211 238 232 121 249; }
 
 # ---------------------------------------------------------------------------
 # Output helpers
@@ -91,26 +134,22 @@ err()     { printf '   %s✗%s %s\n'  "$RED"     "$NC" "$1" >&2; }
 info()    { printf '   %sℹ%s %s\n'  "$BLUE"    "$NC" "$1"; }
 dry()     { printf '   %s◌%s %s%swould%s %s\n' "$MAGENTA" "$NC" "$DIM" "$MAGENTA" "$NC" "$1"; }
 
-# A numbered "step" heading. STEP_TOTAL is set by each action up front.
-step() {
-    STEP=$((STEP + 1))
-    printf '\n%s  ▸ %s%s  %s[%d/%d]%s\n' "$BOLD$CYAN" "$1" "$NC" "$DIM" "$STEP" "$STEP_TOTAL" "$NC"
-}
-
-hr() { printf '%s  ────────────────────────────────────────────────────────%s\n' "$DIM" "$NC"; }
-
-# A tidy framed banner. Drawn in a single color so embedded escape codes never
-# throw off the box alignment.
+# A gradient framed banner. The border is a single color; the title text is
+# gradient-painted with manual padding so the embedded color codes never throw
+# off the box width.
 banner() {
     local title="$1" subtitle="${2:-}"
-    printf '\n%s' "$BOLD$CYAN"
-    printf '  ╭──────────────────────────────────────────────────────╮\n'
-    printf '  │  %-52s│\n' "$title"
-    if [ -n "$subtitle" ]; then
-        printf '  │  %-52s│\n' "$subtitle"
-    fi
-    printf '  ╰──────────────────────────────────────────────────────╯'
-    printf '%s\n' "$NC"
+    printf '\n%s  ╭──────────────────────────────────────────────────────╮%s\n' "$CYAN" "$NC"
+    _box_line "$title"
+    [ -n "$subtitle" ] && _box_line "$subtitle"
+    printf '%s  ╰──────────────────────────────────────────────────────╯%s\n' "$CYAN" "$NC"
+}
+_box_line() {
+    local s="$1" pad
+    pad=$(( 52 - ${#s} )); [ "$pad" -lt 0 ] && pad=0
+    printf '%s  │  %s' "$CYAN" "$NC"
+    grad "$s"
+    printf '%*s%s│%s\n' "$pad" '' "$CYAN" "$NC"
 }
 
 # Run a simple command, or just describe it in dry-run mode.
@@ -122,9 +161,97 @@ run() {
 die() { err "$1"; exit 1; }
 
 # ---------------------------------------------------------------------------
+# Spinner + grouped jobs
+# ---------------------------------------------------------------------------
+# The animator runs in the BACKGROUND and tails a shared logfile; the job runs
+# in the FOREGROUND with stdout/stderr redirected into that same logfile. This
+# split is deliberate: the job mutates parent-shell state (TMP_DIR, INJECTED,
+# HEADER_FILE), which a backgrounded subshell would silently lose.
+_spin_animate() {
+    set +e   # subshell-local: a stray non-zero (e.g. tput) must not kill the spin
+    local i=0 fr cols last avail
+    while :; do
+        fr=${SPIN_FRAMES[$i]}; i=$(( (i + 1) % ${#SPIN_FRAMES[@]} ))
+        cols=$(tput cols 2>/dev/null || echo 80)
+        # Latest line of job output, stripped of CR and ANSI so width math holds.
+        last=$(tail -n1 "$SPIN_LOG" 2>/dev/null | tr -d '\r' | sed $'s/\033\\[[0-9;]*m//g')
+        avail=$(( cols - ${#SPIN_TITLE} - 8 )); [ "$avail" -lt 4 ] && avail=4
+        last=${last:0:$avail}
+        printf '\r\033[K  %s%s%s %s   %s%s%s' "$CYAN" "$fr" "$NC" "$GRAD_TITLE" "$DIM" "$last" "$NC"
+        sleep 0.08
+    done
+}
+
+spinner_start() {
+    SPIN_TITLE="$1"
+    GRAD_TITLE=$(grad "$SPIN_TITLE")
+    SPIN_LOG=$(mktemp)
+    printf '\033[?25l'           # hide cursor while the line animates
+    _spin_animate &
+    SPIN_PID=$!
+}
+
+spinner_stop() {
+    local rc="$1" secs="$2"
+    if [ -n "${SPIN_PID:-}" ]; then
+        kill "$SPIN_PID" 2>/dev/null || true
+        wait "$SPIN_PID" 2>/dev/null || true
+        SPIN_PID=""
+    fi
+    printf '\r\033[K'            # wipe the spinner line
+    if [ "$rc" -eq 0 ]; then
+        printf '  %s✓%s %s' "$GREEN" "$NC" "$GRAD_TITLE"
+        [ -n "$JOB_NOTE" ] && printf '  %s%s%s' "$DIM" "$JOB_NOTE" "$NC"
+        printf ' %s(%ss)%s\n' "$DIM" "$secs" "$NC"
+    else
+        printf '  %s✗%s %s  %s(failed)%s\n' "$RED" "$NC" "$GRAD_TITLE" "$DIM" "$NC"
+        [ -s "$SPIN_LOG" ] && sed 's/^/      /' "$SPIN_LOG"   # surface what broke
+    fi
+    printf '\033[?25h'          # restore cursor
+    rm -f "$SPIN_LOG" 2>/dev/null || true
+    SPIN_LOG=""
+}
+
+# group "Title" job_function [args...] — the one entry point each step uses.
+# Spinner mode: animate + collapse. Plain/dry mode: print heading, run inline,
+# print a settled ✓ line. Either way a failed job is fatal.
+group() {
+    local title="$1"; shift
+    STEP=$(( STEP + 1 ))
+    local label="[$STEP/$STEP_TOTAL] $title"
+    local start rc secs
+    JOB_NOTE=""
+    start=$(date +%s)
+
+    if $SPINNER_ENABLED; then
+        spinner_start "$label"
+        set +e; "$@" >>"$SPIN_LOG" 2>&1; rc=$?; set -e
+        secs=$(( $(date +%s) - start ))
+        spinner_stop "$rc" "$secs"
+        [ "$rc" -ne 0 ] && die "Step failed: $title"
+    else
+        printf '\n  %s▸%s ' "$BOLD$CYAN" "$NC"; grad "$label"; printf '\n'
+        "$@"
+        secs=$(( $(date +%s) - start ))
+        printf '  %s✓%s ' "$GREEN" "$NC"; grad "$label"
+        [ -n "$JOB_NOTE" ] && printf '  %s%s%s' "$DIM" "$JOB_NOTE" "$NC"
+        printf ' %s(%ss)%s\n' "$DIM" "$secs" "$NC"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 cleanup() {
+    # If we die mid-spinner, kill the animator, surface its captured log, and
+    # always restore the cursor so the terminal is never left hidden.
+    if [ -n "${SPIN_PID:-}" ]; then kill "$SPIN_PID" 2>/dev/null || true; fi
+    printf '\033[?25h' 2>/dev/null || true
+    if [ -n "${SPIN_LOG:-}" ] && [ -s "${SPIN_LOG:-/nonexistent}" ]; then
+        printf '\r\033[K'
+        sed 's/^/      /' "$SPIN_LOG" 2>/dev/null || true
+        rm -f "$SPIN_LOG" 2>/dev/null || true
+    fi
     if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
         rm -rf "$TMP_DIR" 2>/dev/null || true
     fi
@@ -227,7 +354,8 @@ build_font_injector() {
     family="${family//\'/}"
 
     if [ -z "$family" ]; then
-        log "Font: ${BOLD}none${NC} (default) — RTL text keeps Claude's font. Use --font NAME to opt in."
+        log "Font: none (default) — RTL text keeps Claude's font. Use --font NAME to opt in."
+        JOB_NOTE="no font (default)"
         return 0
     fi
 
@@ -270,7 +398,7 @@ build_font_injector() {
             b64=$(base64 < "$f" | tr -d '\n')
             face_css+="@font-face{font-family:'${family}';font-style:${style};font-weight:${weight};font-display:swap;src:url(data:${mime};base64,${b64}) format('${fmt}');}"
             embedded=$((embedded + 1))
-            log "  ${DIM}embed${NC} $(basename "$f") ${DIM}→ weight ${weight}, ${style}${NC}"
+            log "embed $(basename "$f") → weight ${weight}, ${style}"
         done
         shopt -u nullglob nocaseglob
     fi
@@ -287,9 +415,11 @@ build_font_injector() {
     } >> "$header"
 
     if [ "$embedded" -gt 0 ]; then
-        success "Font: ${BOLD}$family${NC} — embedded $embedded file(s) from fonts/ as base64 data: URIs."
+        success "Font: $family — embedded $embedded file(s) from fonts/ as base64 data: URIs."
+        JOB_NOTE="$family · $embedded file(s) embedded"
     else
-        warn "Font: ${BOLD}$family${NC} — no files in fonts/, relying on an installed font of that name."
+        warn "Font: $family — no files in fonts/, relying on an installed font of that name."
+        JOB_NOTE="$family · system fallback"
     fi
 }
 
@@ -335,25 +465,25 @@ inject_payload() {
 
         # Skip the Electron main-process entry — injecting there crashes startup.
         if [ -n "$main_basename" ] && [ "$name" = "$main_basename" ]; then
-            log "skip ${DIM}$name${NC} (Electron main process)"
+            log "skip $name (Electron main process)"
             SKIPPED=$((SKIPPED + 1))
             continue
         fi
 
         # Skip already-patched files (idempotent).
         if grep -q "CLAUDE RTL PATCH START" "$js_file" 2>/dev/null; then
-            log "skip ${DIM}$name${NC} (already patched)"
+            log "skip $name (already patched)"
             SKIPPED=$((SKIPPED + 1))
             continue
         fi
 
         if $DRY_RUN; then
-            dry "inject RTL header into ${BOLD}$name${NC}"
+            dry "inject RTL header into $name"
         else
             # Prepend the combined header (RTL payload + font) to each JS file.
             cat "$header" "$js_file" > "$app_dir/.rtl-merged.js"
             mv "$app_dir/.rtl-merged.js" "$js_file"
-            log "inject ${GREEN}→${NC} $name"
+            log "inject → $name"
         fi
         INJECTED=$((INJECTED + 1))
     done
@@ -361,30 +491,13 @@ inject_payload() {
     if [ "$INJECTED" -eq 0 ] && [ "$SKIPPED" -eq 0 ]; then
         die "No .js files found in .vite/build/. Claude Desktop structure may have changed."
     fi
+    JOB_NOTE="${INJECTED} injected · ${SKIPPED} skipped"
 }
 
 # ---------------------------------------------------------------------------
-# Install
+# Install — job bodies (each is one group)
 # ---------------------------------------------------------------------------
-install_patch() {
-    SECONDS=0
-    STEP=0; STEP_TOTAL=10
-
-    if $DRY_RUN; then
-        banner "Claude Desktop RTL Patcher — Install" "DRY RUN · nothing will be modified"
-    else
-        banner "Claude Desktop RTL Patcher — Install" "v$VERSION"
-    fi
-
-    # --- Preflight ---
-    [ ! -d "$SOURCE_APP" ] && die "Claude.app not found at $SOURCE_APP. Is Claude Desktop installed?"
-    [ ! -f "$PAYLOAD_FILE" ] && die "rtl-payload.js not found at $PAYLOAD_FILE. Re-clone the repository."
-
-    check_dependencies
-    quit_claude_rtl
-
-    # --- 1. Copy ---
-    step "Creating patched copy"
+job_copy() {
     run mkdir -p "$HOME/Applications"
     if [ -d "$PATCHED_APP" ]; then
         log "Removing previous patched copy..."
@@ -393,9 +506,9 @@ install_patch() {
     log "Copying Claude.app → Claude-RTL.app (this may take a moment)..."
     run cp -R "$SOURCE_APP" "$PATCHED_APP"
     $DRY_RUN || success "Created $PATCHED_APP"
+}
 
-    # --- 2. Replace icon ---
-    step "Replacing app icon"
+job_icon() {
     if [ -f "$ICON_FILE" ]; then
         run cp "$ICON_FILE" "$PATCHED_APP/Contents/Resources/electron.icns"
         # macOS prefers CFBundleIconName (asset catalog) over CFBundleIconFile (icns).
@@ -409,9 +522,9 @@ install_patch() {
     else
         warn "icon.icns not found — keeping the original icon."
     fi
+}
 
-    # --- 3. Rename app in Dock / window title ---
-    step "Renaming app to Claude-RTL"
+job_rename() {
     # Use CFBundleDisplayName (cosmetic only) — changing CFBundleName breaks Electron's fuse lookup.
     if $DRY_RUN; then
         dry "set CFBundleDisplayName = Claude-RTL in Info.plist"
@@ -420,49 +533,47 @@ install_patch() {
             || /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Claude-RTL" "$PATCHED_APP/Contents/Info.plist"
         success "App will show as \"Claude-RTL\" in Dock and Finder."
     fi
+}
 
-    # --- 4. Extract ASAR ---
+job_extract() {
     # In dry-run we read the *source* ASAR (read-only) so the preview reflects
     # the real bundle; in a normal run we work on the patched copy's ASAR.
-    step "Extracting app.asar"
     if $DRY_RUN && ! $DEPS_OK; then
         warn "asar unavailable — skipping the file-level preview."
-    else
-        TMP_DIR=$(mktemp -d)
-        local extract_from
-        if $DRY_RUN; then extract_from="$SOURCE_ASAR"; else extract_from="$PATCHED_ASAR"; fi
-        asar_cmd extract "$extract_from" "$TMP_DIR/app"
-        success "Extracted$($DRY_RUN && echo ' (read-only, from the original)')."
+        return 0
     fi
+    TMP_DIR=$(mktemp -d)
+    local extract_from
+    if $DRY_RUN; then extract_from="$SOURCE_ASAR"; else extract_from="$PATCHED_ASAR"; fi
+    asar_cmd extract "$extract_from" "$TMP_DIR/app"
+    success "Extracted."
+    JOB_NOTE="from $(basename "$extract_from")"
+}
 
-    # --- 5. Build the combined header (RTL JS + Font @font-face) ---
+job_header() {
     # The font is embedded as a base64 data: URI rather than loaded from a CDN
     # or a local file: Claude's CSP is "font-src 'self' data:" in the main window
     # and "font-src data:" in the artifact preview sandbox, with connect-src 'none'
     # — so external hosts are blocked and only data: URIs work in every context.
-    step "Building RTL + font header"
-    local header_file=""
     if [ -n "$TMP_DIR" ]; then
-        header_file="$TMP_DIR/rtl-header.js"
-        cp "$PAYLOAD_FILE" "$header_file"
-        build_font_injector "$header_file"
+        HEADER_FILE="$TMP_DIR/rtl-header.js"
+        cp "$PAYLOAD_FILE" "$HEADER_FILE"
+        build_font_injector "$HEADER_FILE"
     else
         # No temp dir (dry-run without deps) — still report what the font step would do.
         build_font_injector /dev/null
     fi
+}
 
-    # --- 6. Inject RTL JS ---
-    step "Injecting RTL code"
-    if [ -n "$TMP_DIR" ] && [ -n "$header_file" ]; then
-        inject_payload "$TMP_DIR/app" "$header_file"
-        [ "${INJECTED:-0}" -gt 0 ] && success "${INJECTED} file(s) would receive the RTL header."
-        [ "${SKIPPED:-0}" -gt 0 ]  && log "${SKIPPED} file(s) skipped (main process / already patched)."
+job_inject() {
+    if [ -n "$TMP_DIR" ] && [ -n "$HEADER_FILE" ]; then
+        inject_payload "$TMP_DIR/app" "$HEADER_FILE"
     else
         dry "inject the RTL header into every renderer .js under .vite/build/"
     fi
+}
 
-    # --- 7. Repack ASAR ---
-    step "Repacking app.asar"
+job_repack() {
     if $DRY_RUN; then
         dry "repack the modified tree back into app.asar"
     else
@@ -470,22 +581,20 @@ install_patch() {
         cp "$TMP_DIR/app.asar.new" "$PATCHED_ASAR"
         success "Repacked."
     fi
+}
 
-    # --- 8. Disable ASAR integrity fuse ---
-    step "Disabling ASAR integrity validation"
+job_fuse() {
     log "Electron validates the ASAR hash at startup; our edits change that hash,"
     log "so this fuse must be off or the patched app crashes on launch."
     if $DRY_RUN; then
         dry "run: @electron/fuses write --app Claude-RTL.app EnableEmbeddedAsarIntegrityValidation=off"
     else
-        fuses_cmd write --app "$PATCHED_APP" EnableEmbeddedAsarIntegrityValidation=off 2>&1 | while IFS= read -r line; do
-            log "$line"
-        done
+        fuses_cmd write --app "$PATCHED_APP" EnableEmbeddedAsarIntegrityValidation=off 2>&1
         success "ASAR integrity fuse disabled."
     fi
+}
 
-    # --- 9. Re-sign ---
-    step "Re-signing with an ad-hoc signature"
+job_resign() {
     log "Our changes invalidate Anthropic's signature; an ad-hoc signature lets macOS run it."
     # Preserve entitlements from the original. Without these, features that
     # check for entitlements at runtime fail — notably Cowork, which calls
@@ -498,35 +607,70 @@ install_patch() {
         dry "copy entitlements from the original (keeping virtualization for Cowork)"
         dry "strip team-id keys: application-identifier, team-identifier, keychain-access-groups"
         dry "run: codesign --force --deep --sign - --entitlements <plist> Claude-RTL.app"
+        return 0
+    fi
+    local entitlements_file="$TMP_DIR/entitlements.plist"
+    mkdir -p "$TMP_DIR"
+    if codesign -d --entitlements :- "$SOURCE_APP" > "$entitlements_file" 2>/dev/null && [ -s "$entitlements_file" ]; then
+        /usr/libexec/PlistBuddy -c "Delete :com.apple.application-identifier" "$entitlements_file" 2>/dev/null || true
+        /usr/libexec/PlistBuddy -c "Delete :com.apple.developer.team-identifier" "$entitlements_file" 2>/dev/null || true
+        /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$entitlements_file" 2>/dev/null || true
+        log "Preserving entitlements from original (incl. virtualization for Cowork)..."
+        codesign --force --deep --sign - --entitlements "$entitlements_file" "$PATCHED_APP" 2>&1
     else
-        local entitlements_file="$TMP_DIR/entitlements.plist"
-        mkdir -p "$TMP_DIR"
-        if codesign -d --entitlements :- "$SOURCE_APP" > "$entitlements_file" 2>/dev/null && [ -s "$entitlements_file" ]; then
-            /usr/libexec/PlistBuddy -c "Delete :com.apple.application-identifier" "$entitlements_file" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Delete :com.apple.developer.team-identifier" "$entitlements_file" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$entitlements_file" 2>/dev/null || true
-            log "Preserving entitlements from original (incl. virtualization for Cowork)..."
-            codesign --force --deep --sign - --entitlements "$entitlements_file" "$PATCHED_APP" 2>&1 | while IFS= read -r line; do
-                log "$line"
-            done
-        else
-            warn "Could not extract entitlements from original — Cowork will not work."
-            codesign --force --deep --sign - "$PATCHED_APP" 2>&1 | while IFS= read -r line; do
-                log "$line"
-            done
-        fi
-        success "App re-signed."
+        warn "Could not extract entitlements from original — Cowork will not work."
+        codesign --force --deep --sign - "$PATCHED_APP" 2>&1
+    fi
+    success "App re-signed."
+}
+
+job_launch() {
+    run open "$PATCHED_APP"
+}
+
+job_remove() {
+    run rm -rf "$PATCHED_APP"
+    $DRY_RUN || success "Removed $PATCHED_APP"
+}
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+install_patch() {
+    SECONDS=0
+    STEP=0; STEP_TOTAL=10
+    HEADER_FILE=""
+
+    if $DRY_RUN; then
+        banner "Claude Desktop RTL Patcher — Install" "DRY RUN · nothing will be modified"
+    else
+        banner "Claude Desktop RTL Patcher — Install" "v$VERSION"
     fi
 
-    # --- Cleanup temp ---
+    # --- Preflight (ungrouped: must run before the spinner choreography) ---
+    [ ! -d "$SOURCE_APP" ] && die "Claude.app not found at $SOURCE_APP. Is Claude Desktop installed?"
+    [ ! -f "$PAYLOAD_FILE" ] && die "rtl-payload.js not found at $PAYLOAD_FILE. Re-clone the repository."
+    check_dependencies
+    quit_claude_rtl
+
+    # --- The ten grouped jobs, each under its own gradient spinner ---
+    group "Creating patched copy"            job_copy
+    group "Replacing app icon"               job_icon
+    group "Renaming app to Claude-RTL"       job_rename
+    group "Extracting app.asar"              job_extract
+    group "Building RTL + font header"       job_header
+    group "Injecting RTL code"               job_inject
+    group "Repacking app.asar"               job_repack
+    group "Disabling ASAR integrity fuse"    job_fuse
+    group "Re-signing (ad-hoc signature)"    job_resign
+
+    # Drop the temp tree before launching (kept until now for re-sign entitlements).
     if [ -n "$TMP_DIR" ]; then
         rm -rf "$TMP_DIR" 2>/dev/null || true
         TMP_DIR=""
     fi
 
-    # --- 10. Launch ---
-    step "Launching Claude-RTL"
-    run open "$PATCHED_APP"
+    group "Launching Claude-RTL"             job_launch
 
     # --- Summary ---
     if $DRY_RUN; then
@@ -534,7 +678,7 @@ install_patch() {
         echo ""
         echo "    Would patch:   ${BOLD}$SOURCE_APP${NC}"
         echo "    Would create:  ${BOLD}$PATCHED_APP${NC}"
-        [ -n "${INJECTED:-}" ] && echo "    Would inject:  ${BOLD}${INJECTED}${NC} renderer file(s), skipping ${BOLD}${SKIPPED:-0}${NC}"
+        [ "${INJECTED:-0}" -gt 0 ] && echo "    Would inject:  ${BOLD}${INJECTED}${NC} renderer file(s), skipping ${BOLD}${SKIPPED:-0}${NC}"
         echo ""
     else
         banner "PATCH INSTALLED SUCCESSFULLY" "Completed in ${SECONDS}s"
@@ -568,10 +712,7 @@ uninstall_patch() {
     fi
 
     quit_claude_rtl
-
-    step "Removing patched app"
-    run rm -rf "$PATCHED_APP"
-    $DRY_RUN || success "Removed $PATCHED_APP"
+    group "Removing patched app" job_remove
 
     if $DRY_RUN; then
         banner "DRY RUN COMPLETE — nothing was removed"
@@ -646,7 +787,7 @@ usage() {
     -n, --dry-run        Preview every step without changing anything
     -y, --yes            Non-interactive (auto-confirm the menu's install)
         --color[=WHEN]   Colorize output: auto (default), always, never
-        --no-color       Disable colors (same as --color=never)
+        --no-color       Disable colors & spinner (same as --color=never)
     -V, --version        Print version and exit
     -h, --help           Show this help
 
@@ -684,7 +825,7 @@ interactive_menu() {
         1) install_patch ;;
         2) uninstall_patch ;;
         3) show_status ;;
-        4) DRY_RUN=true; install_patch ;;
+        4) DRY_RUN=true; SPINNER_ENABLED=false; install_patch ;;
         5) exit 0 ;;
         *) err "Invalid choice: '$choice'"; exit 1 ;;
     esac
@@ -720,7 +861,7 @@ while [ $# -gt 0 ]; do
         -V|--version)
             echo "Claude Desktop RTL Patcher v$VERSION"; exit 0 ;;
         -h|--help)
-            COLOR_MODE="$COLOR_MODE"; setup_colors; usage; exit 0 ;;
+            setup_colors; usage; exit 0 ;;
         "")
             shift ;;
         *)
@@ -729,6 +870,12 @@ while [ $# -gt 0 ]; do
 done
 
 setup_colors
+
+# The spinner needs a live TTY and colors, and is pointless in dry-run (where we
+# WANT every "would …" line printed, not collapsed).
+if [ -n "$NC" ] && [ -t 1 ] && ! $DRY_RUN; then
+    SPINNER_ENABLED=true
+fi
 
 case "$ACTION" in
     --install)   install_patch ;;

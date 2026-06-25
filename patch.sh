@@ -681,9 +681,9 @@ install_patch() {
     if $DRY_RUN; then
         banner "DRY RUN COMPLETE — nothing was changed" "Re-run without --dry-run to apply."
         echo ""
-        echo "    Would patch:   ${BOLD}$SOURCE_APP${NC}"
-        echo "    Would create:  ${BOLD}$PATCHED_APP${NC}"
-        [ "${INJECTED:-0}" -gt 0 ] && echo "    Would inject:  ${BOLD}${INJECTED}${NC} renderer file(s), skipping ${BOLD}${SKIPPED:-0}${NC}"
+        printf '    Would patch:   '; grad "$SOURCE_APP"; printf '\n'
+        printf '    Would create:  '; grad "$PATCHED_APP"; printf '\n'
+        [ "${INJECTED:-0}" -gt 0 ] && { printf '    Would inject:  '; grad "${INJECTED} renderer file(s), skipping ${SKIPPED:-0}"; printf '\n'; }
         echo ""
     else
         banner "PATCH INSTALLED SUCCESSFULLY" "Completed in ${SECONDS}s"

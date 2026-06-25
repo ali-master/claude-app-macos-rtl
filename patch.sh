@@ -26,18 +26,18 @@ PAYLOAD_FILE="$SCRIPT_DIR/rtl-payload.js"
 ICON_FILE="$SCRIPT_DIR/icon.icns"
 FONTS_DIR="$SCRIPT_DIR/fonts"
 
-# Font used for RTL (Hebrew/Arabic/Persian) text. Disabled by default — RTL
-# text keeps Claude's default font. Opt in either way:
-#   * Command line:  ./patch.sh --install --font Vazirmatn (or Estedad)
+# Font used for RTL (Hebrew/Arabic/Persian) text. Defaults to the bundled
+# Estedad family; override or disable it either way:
+#   * Command line:  ./patch.sh --install --font Vazirmatn
 #   * Environment:   RTL_FONT_FAMILY=Vazirmatn ./patch.sh --install
-# Vazirmatn and Estedad (Persian/Arabic, OFL) are bundled in fonts/ — pass
-# --font Vazirmatn or --font Estedad to embed them. To use a different font,
-# drop your own .woff2/.woff/.ttf/.otf files in fonts/ and pass --font
-# "<family-name>" (the embedded files mean it works even if the font isn't
-# installed on the system). With no matching files in fonts/ the patch falls
-# back to an already-installed font of that name.
+#   * Disable:       ./patch.sh --install --font "" (keep Claude's own font)
+# Vazirmatn and Estedad (Persian/Arabic, OFL) are bundled in fonts/. To use a
+# different font, drop your own .woff2/.woff/.ttf/.otf files in fonts/ and pass
+# --font "<family-name>" (the embedded files mean it works even if the font
+# isn't installed on the system). With no matching files in fonts/ the patch
+# falls back to an already-installed font of that name.
 # The --font flag overrides RTL_FONT_FAMILY when both are set.
-RTL_FONT_FAMILY="${RTL_FONT_FAMILY-}"
+RTL_FONT_FAMILY="${RTL_FONT_FAMILY-Estedad}"
 
 SOURCE_APP="/Applications/Claude.app"
 SOURCE_ASAR="$SOURCE_APP/Contents/Resources/app.asar"
@@ -405,8 +405,12 @@ build_font_injector() {
 
     # Apply the family to RTL text. Fallbacks cover Hebrew/Latin glyphs the
     # chosen font may lack; code stays monospace. (Selectors use single quotes.)
-    face_css+="[dir='rtl'],[dir='rtl'] *,[data-testid='chat-input'],.tiptap.ProseMirror{font-family:'${family}',Tahoma,-apple-system,system-ui,sans-serif!important}"
-    face_css+="[dir='rtl'] pre,[dir='rtl'] code,[dir='rtl'] pre *,[dir='rtl'] code *,.tiptap.ProseMirror pre,.tiptap.ProseMirror code,.tiptap.ProseMirror pre *,.tiptap.ProseMirror code *{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace!important}"
+    # font-feature-settings enables the family's stylistic sets (ss01–ss20) —
+    # Estedad uses these for nicer Persian glyph shaping; harmless for fonts
+    # that don't define them.
+    local feature_settings="font-feature-settings:'ss01' on,'ss02' on,'ss03' on,'ss10' on,'ss11' on,'ss12' on,'ss20' on"
+    face_css+="[dir='rtl'],[dir='rtl'] *,[data-testid='chat-input'],.tiptap.ProseMirror{font-family:'${family}',Tahoma,-apple-system,system-ui,sans-serif!important;${feature_settings}!important}"
+    face_css+="[dir='rtl'] pre,[dir='rtl'] code,[dir='rtl'] pre *,[dir='rtl'] code *,.tiptap.ProseMirror pre,.tiptap.ProseMirror code,.tiptap.ProseMirror pre *,.tiptap.ProseMirror code *{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace!important;font-feature-settings:normal!important}"
 
     {
         printf '\n// --- CLAUDE RTL FONT START ---\n'
@@ -782,8 +786,9 @@ usage() {
     --font NAME          Embed/use NAME as the font for RTL text.
                          Bundled: ${BOLD}Vazirmatn${NC}, ${BOLD}Estedad${NC} (Persian/Arabic, OFL).
                          Drop your own .woff2/.woff/.ttf/.otf in fonts/ (named
-                         with the family prefix) to bundle others. Default: no
-                         font change. Env equivalent: RTL_FONT_FAMILY=NAME
+                         with the family prefix) to bundle others. Default:
+                         ${BOLD}Estedad${NC} (use --font "" to keep Claude's own font).
+                         Env equivalent: RTL_FONT_FAMILY=NAME
     -n, --dry-run        Preview every step without changing anything
     -y, --yes            Non-interactive (auto-confirm the menu's install)
         --color[=WHEN]   Colorize output: auto (default), always, never

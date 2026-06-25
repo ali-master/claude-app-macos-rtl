@@ -229,7 +229,7 @@ group() {
         set +e; "$@" >>"$SPIN_LOG" 2>&1; rc=$?; set -e
         secs=$(( $(date +%s) - start ))
         spinner_stop "$rc" "$secs"
-        [ "$rc" -ne 0 ] && die "Step failed: $title"
+        if [ "$rc" -ne 0 ]; then die "Step failed: $title"; fi
     else
         printf '\n  %s▸%s ' "$BOLD$CYAN" "$NC"; grad "$label"; printf '\n'
         "$@"
@@ -238,6 +238,10 @@ group() {
         [ -n "$JOB_NOTE" ] && printf '  %s%s%s' "$DIM" "$JOB_NOTE" "$NC"
         printf ' %s(%ss)%s\n' "$DIM" "$secs" "$NC"
     fi
+    # Always succeed on a completed step: a failing final command (e.g. a false
+    # `[ … ]` test) would otherwise become group()'s return value and trip the
+    # caller's `set -e`, aborting the run right after a successful step.
+    return 0
 }
 
 # ---------------------------------------------------------------------------

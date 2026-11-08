@@ -270,7 +270,9 @@ asar_cmd() {
     if command -v asar &>/dev/null; then
         asar "$@"
     elif command -v npx &>/dev/null; then
-        npx --yes @electron/asar "$@"
+        # `npx pkg args` re-runs args through a shell unquoted, so a brace glob like
+        # `--unpack {a,b}` gets brace-expanded and only `a` survives. Quote them ourselves.
+        npx --yes -p @electron/asar -c "asar $(printf '%q ' "$@")"
     else
         die "Bug: asar_cmd called without asar or npx available."
     fi
@@ -582,11 +584,34 @@ job_inject() {
     fi
 }
 
+# Prints an `asar pack --unpack` glob matching every file the original ASAR keeps
+# in app.asar.unpacked/ (native .node addons, node-pty's spawn-helper,
+# github-mcp-server, …). Without it, repack folds them into the archive: it
+# grows ~6x and executables that must be real files on disk can't be spawned.
+# Read from the source header so new Claude versions need no list edits.
+unpack_glob() {
+    node -e '
+const fs = require("fs"), fd = fs.openSync(process.argv[1], "r"), b = Buffer.alloc(16);
+fs.readSync(fd, b, 0, 16, 0);
+const h = Buffer.alloc(b.readUInt32LE(12)); fs.readSync(fd, h, 0, h.length, 16);
+const names = new Set();
+(function walk(n) { for (const [k, v] of Object.entries(n.files || {})) v.files ? walk(v) : v.unpacked && names.add(k); })(JSON.parse(h));
+// ponytail: basename match (minimatch matchBase), may also unpack a same-named file elsewhere — harmless.
+const l = [...names]; if (l.length) process.stdout.write(l.length > 1 ? "{" + l.join(",") + "}" : l[0]);
+' "$SOURCE_ASAR"
+}
+
 job_repack() {
     if $DRY_RUN; then
         dry "repack the modified tree back into app.asar"
     else
-        asar_cmd pack "$TMP_DIR/app" "$TMP_DIR/app.asar.new"
+        local glob
+        glob=$(unpack_glob) || die "Could not read unpacked entries from $SOURCE_ASAR"
+        # An empty glob is falsy to asar, so this is a plain pack when nothing is unpacked.
+        asar_cmd pack "$TMP_DIR/app" "$TMP_DIR/app.asar.new" --unpack "$glob"
+        # Only the header changes. The app.asar.unpacked/ copied from the original stays:
+        # we never edit unpacked files, and asar's own copy drops the exec bit
+        # (spawn-helper, github-mcp-server would then fail to spawn).
         cp "$TMP_DIR/app.asar.new" "$PATCHED_ASAR"
         success "Repacked."
     fi
@@ -599,7 +624,12 @@ job_fuse() {
         dry "run: @electron/fuses write --app Claude-RTL.app EnableEmbeddedAsarIntegrityValidation=off"
     else
         fuses_cmd write --app "$PATCHED_APP" EnableEmbeddedAsarIntegrityValidation=off 2>&1
-        success "ASAR integrity fuse disabled."
+        # Never trust the exit code alone: a write that silently doesn't stick
+        # leaves the fuse on, and Electron then aborts at launch (EXC_BREAKPOINT).
+        fuses_cmd read --app "$PATCHED_APP" 2>/dev/null \
+            | grep -q 'EnableEmbeddedAsarIntegrityValidation is Disabled' \
+            || die "ASAR integrity fuse is still enabled after write — the patched app would crash on launch."
+        success "ASAR integrity fuse disabled (verified)."
     fi
 }
 

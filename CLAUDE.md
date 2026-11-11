@@ -42,6 +42,7 @@ Key internals:
 - **3-layer direction detection** (`detectTextDir` / `detectElDir`): first-strong character → strip leading LTR noise (URLs, file paths, inline-code) and re-check → fall back to RTL if any RTL char is present.
 - **`WRITING_SEL`** = `[data-testid="chat-input"], .tiptap.ProseMirror` — the chat input editor(s) that get live direction switching on the `input` event.
 - **`MATH_SEL`** isolates KaTeX/MathJax/MathML so equations stay LTR (`forceMathLTR` + CSS `unicode-bidi:isolate`).
+- **Nav chrome is never flipped** (`NAV_SEL` = `nav, [role="navigation"]`, e.g. the session sidebar): rows with RTL text get `data-rtl-nav` instead of `dir`, rendered with `unicode-bidi:plaintext` + `text-align:left` so they stay aligned with their LTR neighbours. Only an RTL-first title that overflows gets `data-rtl-nav="rtl"`, which mirrors the app's `[mask-image:linear-gradient(to_right…)]` fade to the left edge.
 - Most enforcement is CSS in `injectStyles()` (`unicode-bidi:plaintext` on block elements); the JS only sets `dir` attributes the CSS keys off of.
 
 When editing payload behavior, **preserve the start/end marker comments** — removing them breaks idempotency. The `font-family` for RTL text is intentionally **not** set here — it's injected separately by `build_font_injector` only when the user opts in, so the family name has a single source of truth.

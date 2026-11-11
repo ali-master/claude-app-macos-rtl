@@ -340,6 +340,31 @@
       el.style.direction = '';
     }
     
+    // --- NAVIGATION CHROME (sidebar, tabs) ---
+    //
+    // Sidebar rows are fixed LTR chrome: icons, hover buttons and the truncation
+    // mask all assume left-to-right. Flipping a row to dir=rtl right-aligns it among
+    // left-aligned neighbours and clips long titles on the wrong side. So in nav we
+    // never set dir; we only mark rows with RTL text and let unicode-bidi:plaintext
+    // order the words by their own first strong character (see injectStyles).
+    var NAV_SEL = 'nav, [role="navigation"]';
+    var NAV_FLAG = 'data-rtl-nav';
+
+    function markNav(el) {
+      if (hasRTL(el.textContent || '')) {
+        if (el.hasAttribute('dir')) el.removeAttribute('dir');
+        el.style.direction = ''; el.style.textAlign = '';
+        // 'rtl' when an RTL-first title overflows: its start then sits on the right,
+        // so the truncation fade moves to the left edge (see injectStyles). Titles
+        // that fit keep the stock right fade, which only covers empty space.
+        // ponytail: overflow is measured per DOM pass, not on sidebar resize.
+        var clipped = el.scrollWidth > el.clientWidth + 1;
+        el.setAttribute(NAV_FLAG, clipped && firstStrong(el.textContent) === 'rtl' ? 'rtl' : '1');
+      } else if (el.hasAttribute(NAV_FLAG)) {
+        el.removeAttribute(NAV_FLAG);
+      }
+    }
+
     // --- HYBRID DIRECTION DETECTION ---
     
     // For DOM elements (output): 3-layer detection
@@ -494,6 +519,7 @@
       qsa(root, 'p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, summary, label, dt, dd').forEach(function(el) {
         if (el.closest(WRITING_SEL) || el.closest('pre') || el.closest('.code-block__code')) return;
         if (el.hasAttribute(RTL_SPLIT_FLAG)) return;
+        if (el.closest(NAV_SEL)) { markNav(el); return; }
         var dir = detectElDir(el);
         if (dir) {
           if (dir === 'rtl' && hasMultiScriptLines(el)) {
@@ -520,7 +546,7 @@
       
       // Lists
       qsa(root, 'ul, ol').forEach(function(el) {
-        if (el.closest(WRITING_SEL) || el.closest('pre')) return;
+        if (el.closest(WRITING_SEL) || el.closest('pre') || el.closest(NAV_SEL)) return;
         var dir = detectElDir(el);
         if (dir === 'rtl') {
           el.dir = 'rtl';
@@ -546,6 +572,7 @@
         if (/^(P|LI|H[1-6]|BLOCKQUOTE|TD|TH|UL|OL)$/.test(el.tagName)) return;
         var text = (el.textContent || '').trim();
         if (text.length < 2) return;
+        if (el.closest(NAV_SEL)) { markNav(el); return; }
         if (hasRTL(text)) {
           if (hasMultiScriptLines(el)) {
             splitToDirectionalSpans(el);
@@ -597,6 +624,11 @@
         'table[dir="rtl"]{direction:rtl!important}',
         '[dir]{text-align:start!important}[dir="rtl"]{direction:rtl!important}[dir="ltr"]{direction:ltr!important}',
         '[dir]>*:not([dir]):not(pre):not(code):not(.code-block__code){unicode-bidi:plaintext;text-align:start}',
+        // Nav rows with RTL text: words ordered by their own first strong char, row
+        // stays left-aligned like its neighbours. :is() lifts specificity above the
+        // li:not([dir]){text-align:start} rule at the top.
+        ':is(nav,[role="navigation"]) [data-rtl-nav]{unicode-bidi:plaintext!important;text-align:left!important}',
+        ':is([data-rtl-nav="rtl"][class*="mask-image:linear-gradient(to_right"],[class*="mask-image:linear-gradient(to_right"]:has(>[data-rtl-nav="rtl"])){-webkit-mask-image:linear-gradient(to left,#000 calc(100% - 76px),transparent calc(100% - 28px))!important;mask-image:linear-gradient(to left,#000 calc(100% - 76px),transparent calc(100% - 28px))!important}',
         // RTL: flip sidebar truncation gradient to fade the LEFT edge (issue #7).
         '[dir="rtl"][class*="mask-image:linear-gradient(to_right"]{-webkit-mask-image:linear-gradient(to left,hsl(var(--always-black)) 85%,transparent 99%)!important;mask-image:linear-gradient(to left,hsl(var(--always-black)) 85%,transparent 99%)!important}',
         '.group:hover [dir="rtl"][class*="mask-image:linear-gradient(to_right"],.group:focus-within [dir="rtl"][class*="mask-image:linear-gradient(to_right"],[data-menu-open="true"] [dir="rtl"][class*="mask-image:linear-gradient(to_right"]{-webkit-mask-image:linear-gradient(to left,hsl(var(--always-black)) 60%,transparent 78%)!important;mask-image:linear-gradient(to left,hsl(var(--always-black)) 60%,transparent 78%)!important}'
